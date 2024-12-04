@@ -1,128 +1,137 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import csv
-import pandas as pd  # Import pandas for handling dataframes
 
-# Function to generate heat input based on type
-def heat_input(t, heat_type, amplitude, frequency):
-    if heat_type == "sinusoid":
-        return amplitude * np.sin(2 * np.pi * t / frequency) if frequency != 0 else 0
-    elif heat_type == "constant":
-        return amplitude
-    else:
-        return 0
 
-# Function to calculate Caputo-Fabrizio fractional derivative
-def caputo_fabrizio_derivative(T_history, alpha, dt):
-    n = len(T_history)
-    sum_term = 0.0  # Initialize as a float to ensure scalar results
-    for j in range(1, n):
-        exp_term = np.exp(-alpha * (n - j) * dt / (1 - alpha))
-        sum_term += (T_history[j] - T_history[j - 1]) * exp_term
-    return (1 / (1 - alpha)) * sum_term  # Ensure this returns a scalar
+class BioheatSimulation:
+    def __init__(self, method="FDM", Nx=60, Nt=100000):
+        """
+        Initialize the Bioheat Simulation parameters.
 
-# Load realistic parameters from Excel file
-df = pd.read_excel('realistic_dummy_bioheat_data.xlsx')
+        Parameters:
+            method (str): Choose between "FDM" or "FVM".
+            Nx (int): Number of spatial nodes.
+            Nt (int): Number of time steps.
+        """
+        self.method = method
+        self.Nx = Nx
+        self.Nt = Nt
+        self.avg_temp = None
 
-# Prepare to collect overall heat values
-overall_heat_data = []
+    def run_simulation(self):
+        """
+        Run the bioheat simulation and compute the average temperature.
 
-# Loop through each individual and solve the bioheat equation
-for index, person in df.iterrows():
-    # Extract parameters from DataFrame
-    rho = person['rho']
-    c = person['c']
-    k = person['k']
-    rho_b = person['rho_b']
-    c_b = person['c_b']
-    omega_b = person['omega_b']
-    T_b = person['T_b']
-    Q_m = person['Q_m']
-    T0 = person['T0']
-    L = person['L']
-    t_end = person['t_end']
-    dt = person['dt']
-    heat_type = person['heat_type']
-    amplitude = person['amplitude']
-    frequency = person['frequency']
-    alpha = person['alpha']  # Fractional order
+        Returns:
+            float: The average temperature at the final step.
+        """
+        # Constants and parameters
+        k_base = 0.4  # W/m·K
+        c_base = 2980  # J/kg·K
+        rho = 985  # kg/m³
+        w_b_base = 0.02  # 1/s
+        rho_b = 1060  # kg/m³
+        c_b = 3610  # J/kg·K
+        T_a = 38  # °C
+        Q_m = 368.1  # W/m³
+        L = 0.025  # m
+        A = 0.4  # m²
+        T_right = 37  # °C
+        h_conv = 3.3  # W/m²·K
+        T_inf = 37  # °C
+        dx = L / (self.Nx - 1)
+        dt = 0.01  # s
 
-    # Simulation parameters
-    Nx = 50  # Number of spatial points
-    dx = L / Nx  # Spatial step size
-    Nt = int(t_end / dt)  # Number of time steps
+        # Gaussian external heat source parameters
+        total_power = 300  # W
+        V = L * A  # m³
+        Q_max = total_power / V  # W/m³
+        x0 = L / 2  # Center of the Gaussian source
+        sigma = 0.002  # m
 
-    # Modified thermal diffusivity with fractional order
-    K = k * dt ** (alpha - 1)
+        # Spatial domain
+        x = np.linspace(0, L, self.Nx)
 
-    # Boundary conditions
-    T_left = T0
-    T_right = T0
+        # Temperature-dependent properties
+        def k_temp(T):
+            return k_base * (1 + 0.01 * (T - T_a))
 
-    # Initial temperature distribution
-    T = T0 * np.ones(Nx)
-    T_new = np.copy(T)
+        def c_temp(T):
+            return c_base * (1 + 0.01 * (T - T_a))
 
-    # Store temperature history for fractional derivative calculation
-    T_history = []
+        def wb_temp(T):
+            return w_b_base * (1 + 0.01 * (T - T_a))
 
-    # Open CSV file for writing temperature distribution
-    with open(f'temperature_distribution_person_{index + 1}.csv', mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(['Time (s)', 'Temperature at center', 'Average Temperature'])
+        # Define Gaussian external heat source
+        def Q_ext(x_pos):
+            normalization_factor = total_power / (np.sqrt(2 * np.pi) * sigma * A)
+            return normalization_factor * np.exp(-((x_pos - x0) ** 2) / (2 * sigma ** 2))
 
-        # Time loop
-        for n in range(Nt):
-            # Update history
-            T_history.append(np.copy(T))
+        # Stability check
+        alpha = k_base / (rho * c_base)
+        stability_limit = dx ** 2 / (2 * alpha)
+        if dt > stability_limit:
+            raise ValueError(f"Time step size {dt} exceeds stability limit {stability_limit:.5e}")
 
-            # Apply boundary conditions
-            T_new[0] = T_left
-            T_new[-1] = T_right
+        # Initialize temperature profiles for FDM and FVM
+        T_FDM = np.ones(self.Nx) * T_a
+        T_FVM = np.ones(self.Nx) * T_a
 
-            # Update temperature for internal points
-            for i in range(1, Nx - 1):
-                # Spatial finite difference
-                conduction = K * (T[i + 1] - 2 * T[i] + T[i - 1]) / (dx ** 2)
+        if self.method == "FDM":
+            for n in range(self.Nt):
+                T_new_FDM = T_FDM.copy()
+                for i in range(1, self.Nx - 1):
+                    c_local = c_temp(T_FDM[i])
+                    k_left = k_temp(T_FDM[i - 1])
+                    k_right = k_temp(T_FDM[i + 1])
+                    wb_local = wb_temp(T_FDM[i])
 
-                # Fractional time derivative term
-                if n > 0:
-                    fractional_term = caputo_fabrizio_derivative(T_history[:n + 1], alpha, dt)
-                    # Ensure fractional_term is a scalar
-                    fractional_term = np.sum(fractional_term)  # Use np.sum to get a single scalar value
-                else:
-                    fractional_term = 0
+                    flux_left = k_left * (T_FDM[i - 1] - T_FDM[i]) / dx
+                    flux_right = k_right * (T_FDM[i + 1] - T_FDM[i]) / dx
+                    perfusion = wb_local * rho_b * c_b * (T_a - T_FDM[i])
+                    heat_source = Q_m + Q_ext(x[i])
 
-                # Perfusion, metabolic, and external heat source
-                perfusion = rho_b * c_b * omega_b * (T_b - T[i]) / (rho * c)
-                metabolic = Q_m / (rho * c)
-                heat_ext = heat_input(n * dt, heat_type, amplitude, frequency)
+                    T_new_FDM[i] += dt / (rho * c_local) * (flux_right - flux_left + perfusion + heat_source)
 
-                # Ensure all terms are scalars
-                T_new[i] = T[i] + dt * (conduction + perfusion + metabolic + heat_ext + fractional_term)
-                T_new[i] = np.clip(T_new[i], 35, 40)
+                # Boundary conditions
+                T_new_FDM[0] += dt * (h_conv * (T_inf - T_FDM[0]) + Q_ext(x[0])) / (rho * c_temp(T_FDM[0]) * dx)
+                T_new_FDM[-1] = T_right
+                T_FDM = T_new_FDM
 
-            # Update temperature for next time step
-            T[:] = T_new[:]
+            self.avg_temp = np.mean(T_FDM)
 
-            # Calculate average temperature and store in overall heat data
-            average_temperature = np.mean(T)
-            overall_heat_data.append(average_temperature)  # Store average temperature
+        elif self.method == "FVM":
+            for n in range(self.Nt):
+                T_new_FVM = T_FVM.copy()
+                for i in range(1, self.Nx - 1):
+                    c_local = c_temp(T_FVM[i])
+                    k_left = k_temp(T_FVM[i - 1])
+                    k_right = k_temp(T_FVM[i + 1])
+                    wb_local = wb_temp(T_FVM[i])
 
-            # Write to CSV file
-            writer.writerow([n * dt, T[Nx // 2], average_temperature])
+                    flux_left = (k_left + k_temp(T_FVM[i])) / 2 * (T_FVM[i] - T_FVM[i - 1]) / dx
+                    flux_right = (k_right + k_temp(T_FVM[i])) / 2 * (T_FVM[i + 1] - T_FVM[i]) / dx
+                    perfusion = wb_local * rho_b * c_b * (T_a - T_FVM[i])
+                    heat_source = Q_m + Q_ext(x[i])
 
-    # Plot results for each person
-    plt.figure()
-    plt.plot(np.linspace(0, L, Nx), T, label=f'Time = {t_end}s for Person {index + 1}')
-    plt.xlabel('Position along tissue (m)')
-    plt.ylabel('Temperature (°C)')
-    plt.title(f'Temperature Distribution for Person {index + 1} with Sub-Diffusion (α={alpha})')
-    plt.grid(True)
-    plt.legend()
-    plt.show()
+                    T_new_FVM[i] += dt / (rho * c_local) * (flux_right - flux_left + perfusion + heat_source)
 
-    # Ask user to navigate or exit
-    navigate = input("Press Enter to see the next person's graph or type 'exit' to stop: ")
-    if navigate.lower() == 'exit':
-        break
+                # Boundary conditions
+                T_new_FVM[0] += dt * (h_conv * (T_inf - T_FVM[0]) + Q_ext(x[0])) / (rho * c_temp(T_FVM[0]) * dx)
+                T_new_FVM[-1] = T_right
+                T_FVM = T_new_FVM
+
+            self.avg_temp = np.mean(T_FVM)
+
+        else:
+            raise ValueError("Invalid method. Choose 'FDM' or 'FVM'.")
+
+        return self.avg_temp
+
+    def __call__(self):
+        """
+        Make the class callable to directly run the simulation and return the average temperature.
+
+        Returns:
+            float: Average temperature at the final step.
+        """
+        return self.run_simulation()

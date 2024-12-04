@@ -1,80 +1,76 @@
-import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from fenics import *
 
-# Bioheat equation setup and solution using FEniCS
-def solve_bioheat_equation():
-    # Create a unit square mesh for the domain
-    mesh = UnitSquareMesh(50, 50)  # Adjust mesh resolution as needed
+# Constants and parameters
+k_base = 0.4  # Thermal conductivity [W/m·K]
+c_base = 2980.0  # Specific heat capacity [J/kg·K]
+rho = 985.0  # Density [kg/m³]
+w_b_base = 0.02  # Blood perfusion rate [1/s]
+rho_b = 1060.0  # Blood density [kg/m³]
+c_b = 3610.0  # Blood specific heat capacity [J/kg·K]
+T_a = 38.0  # Arterial blood temperature [°C]
+Q_m = 368.1  # Metabolic heat generation [W/m³]
+L = 0.025  # Depth of the tissue domain [m]
+T_inf = 37.0  # Initial and ambient temperature [°C]
+Nx = 60  # Number of spatial nodes
+Nt = 1000  # Number of time steps
+dx = L / (Nx - 1)  # Spatial step size
+dt = 0.005  # Time step size (reduced for stability)
 
-    # Define the function space
-    V = FunctionSpace(mesh, 'P', 1)  # Linear elements
+# Gaussian external heat source parameters
+total_power = 300.0
+x0 = L / 2
+sigma = 0.002
 
-    # Define boundary conditions (example: constant temperature at the boundaries)
-    u_D = Expression('300 + 50*sin(3.14159*x[0])*sin(3.14159*x[1])', degree=2)
-    bc = DirichletBC(V, u_D, 'on_boundary')
+# Create spatial grid
+x = np.linspace(0, L, Nx)
 
-    # Define the trial and test functions
-    u = TrialFunction(V)
-    v = TestFunction(V)
+# Initialize temperature array
+temperature = np.ones(Nx) * T_inf
 
-    # Define the parameters for the Bioheat equation (simplified model)
-    k = 0.5  # thermal conductivity
-    rho = 1000  # density
-    cp = 3000  # specific heat capacity
-    Q = 0.01  # internal heat generation rate
 
-    # Define the weak form of the Bioheat equation
-    a = rho*cp*dot(grad(u), grad(v))*dx
-    L = Q*v*dx
+# Define the Gaussian heat source function
+def calculate_heat_source(x):
+    normalization_factor = total_power / (np.sqrt(2 * np.pi) * sigma)
+    return normalization_factor * np.exp(-((x - x0) ** 2) / (2 * sigma ** 2))
 
-    # Solve the equation
-    u = Function(V)
-    solve(a == L, u, bc)
 
-    return u
+# Time-stepping loop
+for step in range(Nt):
+    Q_ext = calculate_heat_source(x)
 
-# Load the results from the CSV file for comparison
-def load_csv_data(csv_file):
-    # Load the CSV data containing results (e.g., temperature)
-    csv_data = pd.read_csv(csv_file)
-    return csv_data['Temperature'].values  # Assuming the CSV has a 'Temperature' column
+    # Update temperature using finite difference method
+    temperature_new = np.copy(temperature)
 
-# Compare the COMSOL/FEniCS results with CSV data
-def compare_results(fenics_results, csv_file):
-    # Load the results from CSV
-    csv_data = load_csv_data(csv_file)
+    for i in range(1, Nx - 1):
+        d2T_dx2 = (temperature[i + 1] - 2 * temperature[i] + temperature[i - 1]) / dx ** 2
 
-    # Interpolate FEniCS results to a numpy array for comparison
-    fenics_results_array = fenics_results.vector().get_local()
+        blood_perfusion_term = w_b_base * rho_b * c_b * (T_a - temperature[i])
+        metabolic_term = Q_m
 
-    # Calculate the difference/error between FEniCS and CSV results
-    difference = fenics_results_array - csv_data
-    mse = np.mean(np.square(difference))  # Mean squared error for comparison
+        # Update temperature with stability checks
+        temperature_new[i] += dt * (
+                    k_base * d2T_dx2 + Q_ext[i] + metabolic_term + blood_perfusion_term / (rho * c_base))
 
-    # Print out the error metrics
-    print(f"Mean Squared Error (MSE): {mse}")
+        # Clamp values to prevent NaN or extreme temperatures
+        temperature_new[i] = np.clip(temperature_new[i], T_inf - 10, T_a + 10)
 
-    # Visualize the comparison
-    plt.figure(figsize=(10, 5))
-    plt.plot(fenics_results_array, label='FEniCS Results', color='blue')
-    plt.plot(csv_data, label='CSV Results', color='red', linestyle='--')
-    plt.xlabel('Index')
-    plt.ylabel('Temperature')
-    plt.legend()
-    plt.title('FEniCS Bioheat Equation vs CSV Data')
-    plt.show()
+    temperature = temperature_new
 
-# Main function to run the Bioheat equation solution and comparison
-def main():
-    # Solve the Bioheat equation using FEniCS
-    fenics_results = solve_bioheat_equation()
+    if step % (Nt // 100) == 0:
+        avg_temp = temperature.mean()
+        print(f"Step {step}, Average Temperature: {avg_temp:.2f} °C")
 
-    # Compare the results with those from the CSV file
-    csv_file = 'results_comparison.csv'  # Replace with your CSV file path
-    compare_results(fenics_results, csv_file)
+# Final average temperature at the last time step
+avg_temp_final = temperature.mean()
+print(f"Final Average Temperature: {avg_temp_final:.2f} °C")
 
-# Run the main function
-if __name__ == "__main__":
-    main()
+# Plot the final temperature profile across the tissue
+plt.figure(figsize=(10, 6))
+plt.plot(x, temperature, label=f"Power={total_power} W", color="blue", marker="o", linestyle="--")
+plt.xlabel("Distance (m)")
+plt.ylabel("Temperature (°C)")
+plt.title("Temperature Profile with Gaussian Heat Source")
+plt.legend()
+plt.grid()
+plt.show()
