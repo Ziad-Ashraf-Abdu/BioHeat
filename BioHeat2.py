@@ -21,7 +21,7 @@ x_grid = np.linspace(0, L, Nx)
 
 # Gaussian heat source
 def gaussian_heat_source(x, x0, sigma):
-    return Q_ext_peak * np.exp(-((x - x0) ** 2) / (2 * sigma**2))
+    return 0 #Q_ext_peak * np.exp(-((x - x0) ** 2) / (2 * sigma**2))
 
 # Temperature-dependent properties
 def k(T):
@@ -91,7 +91,7 @@ def solve_fvm():
                 k_w = k((T_fvm[i - 1] + T_fvm[i]) / 2)
                 k_e = k((T_fvm[i] + T_fvm[i + 1]) / 2)
                 perfusion = w_b(T_fvm[i]) * rho_b * c_b * (T_fvm[i] - T_a)
-                Q_ext = gaussian_heat_source(x_grid[i], L / 2, sigma)
+                Q_ext = 0 #gaussian_heat_source(x_grid[i], L / 2, sigma)
                 c_i = c(T_fvm[i])
 
                 # Discretization
@@ -114,7 +114,7 @@ T_fvm = solve_fvm()
 
 # Plot results
 plt.plot(x_grid, T_fdm, label="FDM Solution")
-plt.plot(x_grid, T_fvm, label="FVM Solution", linestyle="--")
+plt.plot(x_grid, T_fvm, label="FVM Solution", linestyle="dashdot")
 plt.xlabel("Distance (m)")
 plt.ylabel("Temperature (°C)")
 plt.title("Bioheat Equation Solution (FDM vs FVM)")

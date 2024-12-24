@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 
 class BioheatSimulation:
-    def __init__(self, method="FDM", Nx=60, Nt=100000):
+    def __init__(self, method="FDM", Nx=60, Nt=100):
         """
         Initialize the Bioheat Simulation parameters.
 
@@ -42,7 +42,7 @@ class BioheatSimulation:
         dt = 0.01  # s
 
         # Gaussian external heat source parameters
-        total_power = 300  # W
+        total_power = 500  # W #Adjustable
         V = L * A  # m³
         Q_max = total_power / V  # W/m³
         x0 = L / 2  # Center of the Gaussian source
@@ -98,6 +98,7 @@ class BioheatSimulation:
                 T_FDM = T_new_FDM
 
             self.avg_temp = np.mean(T_FDM)
+            print(self.avg_temp)
 
         elif self.method == "FVM":
             for n in range(self.Nt):
